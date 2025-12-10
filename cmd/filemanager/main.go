@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"path/filepath"
 
@@ -9,6 +10,8 @@ import (
 	"github.com/cthulhu-platform/filemanager/internal/repository"
 	"github.com/cthulhu-platform/filemanager/internal/server"
 	"github.com/cthulhu-platform/filemanager/internal/service"
+	"github.com/rabbitmq/amqp091-go"
+	"github.com/wagslane/go-rabbitmq"
 )
 
 func main() {
@@ -25,18 +28,33 @@ func main() {
 	defer r.Close()
 
 	// Initialize service
-	s := service.NewFileManagerService(r)
+	fileService := service.NewFileManagerService(r)
 
-	// Configure RabbitMQ server
-	cfg := &server.RMQServerConfig{
-		User:           pkg.AMQP_USER,
-		Password:       pkg.AMQP_PASS,
-		Host:           pkg.AMQP_HOST,
-		Port:           pkg.AMQP_PORT,
-		VHost:          pkg.AMQP_VHOST,
-		ConnectionName: "filemanager",
+	// Create RabbitMQ connection
+	connectionString := fmt.Sprintf("amqp://%s:%s@%s:%s%s",
+		pkg.AMQP_USER,
+		pkg.AMQP_PASS,
+		pkg.AMQP_HOST,
+		pkg.AMQP_PORT,
+		pkg.AMQP_VHOST,
+	)
+	fmt.Println("Connection string: ", connectionString)
+
+	conn, err := rabbitmq.NewConn(
+		connectionString,
+		rabbitmq.WithConnectionOptionsLogging,
+		rabbitmq.WithConnectionOptionsConfig(rabbitmq.Config{
+			Properties: amqp091.Table{
+				"connection_name": "filemanager",
+			},
+		}),
+	)
+	if err != nil {
+		log.Fatalf("Failed to connect to RabbitMQ: %v", err)
 	}
+	defer conn.Close()
 
-	// Start RabbitMQ server
-	server.ListenRMQ(s, cfg)
+	// Create and start RabbitMQ server
+	s := server.NewRMQServer(conn, fileService)
+	s.Start()
 }

@@ -1,8 +1,6 @@
 package service
 
 import (
-	"log"
-
 	"github.com/cthulhu-platform/filemanager/internal/repository"
 )
 
@@ -17,11 +15,7 @@ func NewFileManagerService(repo repository.Repository) FileManagerService {
 }
 
 func (s *fileManagerService) HandleDiagnoseMessage(transactionID, operation, message string) error {
-	log.Printf("FileManager received diagnose message - TransactionID: %s, Operation: %s, Message: %s",
-		transactionID, operation, message)
-
 	// Handle the diagnose message
-	// For now, just log it. Add more logic as needed.
-
+	// The logging is done in the handler layer
 	return nil
 }

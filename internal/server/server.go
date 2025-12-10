@@ -1,7 +1,6 @@
 package server
 
 import (
-	"fmt"
 	"log"
 	"os"
 	"os/signal"
@@ -10,76 +9,59 @@ import (
 	"github.com/cthulhu-platform/common/pkg/messages"
 	"github.com/cthulhu-platform/filemanager/internal/handlers"
 	"github.com/cthulhu-platform/filemanager/internal/service"
-	"github.com/rabbitmq/amqp091-go"
 	"github.com/wagslane/go-rabbitmq"
 )
 
-type RMQServerConfig struct {
-	User           string
-	Password       string
-	Host           string
-	Port           string
-	VHost          string
-	ConnectionName string
+type RMQServer struct {
+	Conn    *rabbitmq.Conn
+	Service service.FileManagerService
 }
 
-// ListenRMQ sets up and starts a RabbitMQ consumer for the filemanager service
-func ListenRMQ(s service.FileManagerService, cfg *RMQServerConfig) {
-	// Create connection string
-	connectionString := fmt.Sprintf("amqp://%s:%s@%s:%s%s",
-		cfg.User,
-		cfg.Password,
-		cfg.Host,
-		cfg.Port,
-		cfg.VHost,
-	)
-
-	// Create RabbitMQ connection with labeled connection name
-	conn, err := rabbitmq.NewConn(
-		connectionString,
-		rabbitmq.WithConnectionOptionsLogging,
-		rabbitmq.WithConnectionOptionsConfig(rabbitmq.Config{
-			Properties: amqp091.Table{
-				"connection_name": cfg.ConnectionName,
-			},
-		}),
-	)
-	if err != nil {
-		log.Fatalf("Failed to connect to RabbitMQ: %v", err)
+// NewRMQServer creates a new RabbitMQ server instance
+func NewRMQServer(conn *rabbitmq.Conn, s service.FileManagerService) *RMQServer {
+	return &RMQServer{
+		Conn:    conn,
+		Service: s,
 	}
-	defer conn.Close()
+}
 
-	// Create consumer for diagnose messages
+// Start sets up and starts the diagnose consumer
+func (s *RMQServer) Start() {
+	// Create diagnose consumer - simplified to match library example pattern
 	consumer, err := rabbitmq.NewConsumer(
-		conn,
+		s.Conn,
 		"filemanager.diagnose",
+		rabbitmq.WithConsumerOptionsRoutingKey(messages.TopicDiagnoseServicesAll),
 		rabbitmq.WithConsumerOptionsExchangeName(messages.DiagnoseExchange),
-		rabbitmq.WithConsumerOptionsExchangeKind("topic"),
 		rabbitmq.WithConsumerOptionsExchangeDeclare,
+		rabbitmq.WithConsumerOptionsExchangeKind("topic"),
 		rabbitmq.WithConsumerOptionsExchangeDurable,
 		rabbitmq.WithConsumerOptionsQueueDurable,
-		rabbitmq.WithConsumerOptionsBinding(rabbitmq.Binding{
-			RoutingKey: messages.TopicDiagnoseServicesAll,
-		}),
+		rabbitmq.WithConsumerOptionsConsumerName("filemanager_diagnose"),
 	)
 	if err != nil {
-		log.Fatalf("Failed to create consumer: %v", err)
+		log.Fatalf("Failed to create diagnose consumer: %v", err)
 	}
 	defer consumer.Close()
 
-	// Start consuming messages
+	log.Printf("FileManager service started and listening for messages on exchange: %s with routing key: %s",
+		messages.DiagnoseExchange, messages.TopicDiagnoseServicesAll)
+
+	// Setup graceful shutdown
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
+
 	go func() {
-		if err := consumer.Run(handlers.HandleDiagnoseMessage(s)); err != nil {
-			log.Fatalf("Consumer error: %v", err)
-		}
+		sig := <-sigs
+		log.Printf("Received signal: %v, stopping consumer...", sig)
+		consumer.Close()
 	}()
 
-	log.Printf("FileManager service started and listening for messages on exchange: %s", messages.DiagnoseExchange)
+	// Block main thread - wait for messages (Run is blocking)
+	log.Println("Starting consumer and waiting for messages...")
+	if err := consumer.Run(handlers.HandleDiagnoseMessage(s.Service)); err != nil {
+		log.Fatalf("Consumer error: %v", err)
+	}
 
-	// Graceful shutdown
-	c := make(chan os.Signal, 1)
-	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
-
-	<-c
 	log.Println("Shutting down gracefully...")
 }
