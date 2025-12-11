@@ -18,7 +18,10 @@ func main() {
 	// Load environment variables from .env file if it exists
 	// Look for .env in the filemanager directory
 	envPath := filepath.Join(".", ".env")
-	env.SetupEnvFile(envPath)
+	if err := env.Init(envPath); err != nil {
+		// Non-fatal: will fall back to environment variables
+		log.Printf("Warning: Could not load .env file: %v\n", err)
+	}
 
 	// Initialize repository
 	r, err := repository.NewLocalRepository(pkg.STORAGE_PATH)
